@@ -1,0 +1,5 @@
+flask
+flask-mongoengine
+flask-bcrypt
+flask-jwt-extended
+python-dotenv
