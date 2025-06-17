@@ -22,6 +22,7 @@ class Event(Document):
             "description": self.description,
             "seats_available": self.seats_available,
             "date": self.date.strftime("%Y-%m-%d %H:%M"),
+            "poster_url": self.poster_url,
             "country": self.country,
             "city": self.city,
             "location": self.location,

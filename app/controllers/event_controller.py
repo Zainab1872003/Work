@@ -29,7 +29,7 @@ def create_event():
     location = request.form.get("location")
     seats = request.form.get("seats_available")
     poster = request.files.get("poster")
-    poster_url = None
+    poster_url1 = None
 
 
 
@@ -59,7 +59,7 @@ def create_event():
         try:
             # 2. Upload to Cloudinary from local path
             result = upload(local_path, folder="event_posters")
-            poster_url = result.get("secure_url")
+            poster_url1 = result.get("secure_url")
 
             # 3. Delete local temp file
             os.remove(local_path)
@@ -75,7 +75,7 @@ def create_event():
         date=date,
         country=country,
         city=city,
-        poster_url=poster_url,
+        poster_url=poster_url1,
         location=location,
         seats_available = seats,
         organizer=user
@@ -134,7 +134,129 @@ def get_event_by_id(event_id):
 
         # Find the event by ID
         event = Event.objects.get(id=event_id)
-        return jsonify({"event": event.to_json()}), 200
+        organizer_name = event.organizer.name
+        event_data = {
+            "id": str(event.id),
+            "title": event.title,
+            "description": event.description,
+            "date": event.date.isoformat(),
+            "city": event.city,
+            "country": event.country,
+            "location": event.location,
+            "seats_available": event.seats_available,
+            "poster_url": event.poster_url,
+            "organizer_id": str(event.organizer.id),
+            "organizer_name": organizer_name  # Include the name here
+        }
+
+        return jsonify({"event": event_data}), 200
 
     except (ValidationError, DoesNotExist):
         return jsonify({"error": "Event not found"}), 404
+
+
+from flask import jsonify
+from flask_jwt_extended import jwt_required, get_jwt_identity
+from ..models.event_model import Event
+from ..models.user_model import User
+
+
+# ... (your other controller functions) ...
+
+@jwt_required()
+def get_vendor_events():
+    """
+    Fetches all events created by the currently authenticated vendor using the correct
+    MongoEngine query syntax.
+    """
+    try:
+        # Get the ID of the currently logged-in user from the JWT token
+        vendor_id = get_jwt_identity()
+
+        # Verify the user exists and has the 'vendor' role
+        user = User.objects(id=vendor_id).first()
+        if not user or user.role != 'vendor':
+            return jsonify({"error": "Unauthorized: Access is restricted to vendors only."}), 403
+
+        # --- CORRECTED MONGOENGINE QUERY ---
+        # Instead of .query.filter_by(), MongoEngine uses .objects()
+        # The minus sign ('-') in '-date' indicates descending order
+        vendor_events = Event.objects(organizer=vendor_id).order_by('-date')
+
+        # Format the events into a JSON-serializable list
+        events_list = [event.to_json() for event in vendor_events]
+
+        # Return the list of events
+        return jsonify({"events": events_list}), 200
+
+    except Exception as e:
+        # Log the error for debugging and return a generic server error
+        print(f"Error in get_vendor_events: {e}")
+        return jsonify({"error": "An internal error occurred while fetching events.", "details": str(e)}), 500
+
+
+# ... other imports from flask, flask_jwt_extended, models, etc.
+
+@jwt_required()
+def update_event(event_id):
+    """
+    Updates an existing event. Only accessible by the event organizer.
+    """
+    try:
+        user_id = get_jwt_identity()
+        event = Event.objects(id=event_id).first()
+
+        if not event:
+            return jsonify({"error": "Event not found."}), 404
+
+        # Security check: Ensure the user is the organizer of this event
+        if str(event.organizer.id) != user_id:
+            return jsonify({"error": "Unauthorized: You are not the organizer of this event."}), 403
+
+        data = request.form
+
+        # Update fields if they are provided in the request
+        if 'title' in data:
+            event.title = data['title']
+        if 'description' in data:
+            event.description = data['description']
+        if 'date' in data:
+            event.date = datetime.strptime(data['date'], '%Y-%m-%d %H:%M')
+        # ... update other fields like city, country, location, seats_available ...
+
+        # Handle poster image update
+        if 'poster' in request.files:
+            poster_image_file = request.files['poster']
+            # Your Cloudinary upload logic here
+            upload_result = cloudinary.uploader.upload(poster_image_file)
+            event.poster_url = upload_result.get('secure_url')
+
+        event.save()
+        return jsonify({"message": "Event updated successfully", "event": event.to_json()}), 200
+
+    except Exception as e:
+        return jsonify({"error": "An internal server error occurred", "details": str(e)}), 500
+
+
+@jwt_required()
+def delete_event(event_id):
+    """
+    Deletes an event. Only accessible by the event organizer.
+    """
+    try:
+        user_id = get_jwt_identity()
+        event = Event.objects(id=event_id).first()
+
+        if not event:
+            return jsonify({"error": "Event not found."}), 404
+
+        # Security check: Ensure the user is the organizer
+        if str(event.organizer.id) != user_id:
+            return jsonify({"error": "Unauthorized: You are not the organizer of this event."}), 403
+
+        event.delete()
+        return jsonify({"message": "Event deleted successfully"}), 200
+
+    except Exception as e:
+        return jsonify({"error": "An internal server error occurred", "details": str(e)}), 500
+
